@@ -92,7 +92,7 @@ err:
 	return err;
 }
 
-static bool getBootreason() {
+static bool getBootreason(void) {
 	char *boot_reason;
         int rc = 0;
         rc = cnss_get_bootarg_dt("androidboot.powerup_reason=", &boot_reason, "mmi,bootconfig", "\n");
