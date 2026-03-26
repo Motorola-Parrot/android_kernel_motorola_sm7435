@@ -491,6 +491,11 @@
 
 #define is_between(val, min, max)	\
 	(((min) <= (max)) && ((min) <= (val)) && ((val) <= (max)))
+/*
+ * rc_clk_cal_count default value if caliration failed and dts not set
+ * this value get from haptics_get_closeloop_lra_period()
+ */
+#define LRA_F0_CAL_COUNT		0x244
 
 enum hap_status_sel {
 	CAL_TLRA_CL_STS = 0x00,
@@ -1260,6 +1265,7 @@ static int haptics_get_closeloop_lra_period(
 					HAP_STATUS_DATA_MSB_SDAM_OFFSET, rc);
 			return rc;
 		}
+		dev_info(chip->dev, "read calibration result from SDAM 0x%x, 0x%x\n", val[0], val[1]);
 	} else {
 		rc = haptics_get_status_data(chip, CAL_TLRA_CL_STS, val);
 		if (rc < 0)
@@ -1380,7 +1386,7 @@ static int haptics_get_closeloop_lra_period(
 		chip->config.rc_clk_cal_count = 0;
 	}
 
-	dev_dbg(chip->dev, "OL_TLRA %u us, CL_TLRA %u us, RC_CLK_CAL_COUNT %#x\n",
+	dev_info(chip->dev, "OL_TLRA %u us, CL_TLRA %u us, RC_CLK_CAL_COUNT %#x\n",
 		chip->config.t_lra_us, chip->config.cl_t_lra_us,
 		chip->config.rc_clk_cal_count);
 	return 0;
@@ -2745,7 +2751,8 @@ static int haptics_load_predefined_effect(struct haptics_chip *chip,
 				return rc;
 
 			pat_sel_mmap = &chip->mmap.pat_sel_mmap[effect->pat_sel];
-			length = pat_sel_mmap->length /
+			//length = pat_sel_mmap->length /
+			length = play->effect->fifo->num_s /
 					chip->mmap.hw_info.pat_mem_play_step;
 			addr = pat_sel_mmap->start_addr / HAP530_MMAP_PAT_LEN_PER_LSB;
 			val[0] = addr & HAP_PTN_PATX_MEM_LEN_LO_MASK;
@@ -3016,7 +3023,7 @@ static int haptics_load_periodic_effect(struct haptics_chip *chip,
 	}
 
 	play->vmax_mv = (magnitude * effects[i].vmax_mv) / 0x7fff;
-	dev_dbg(chip->dev, "upload %s effect %d, vmax=%d\n", primitive ? "primitive" : "predefined",
+	dev_info(chip->dev, "upload %s effect %d, vmax=%d\n", primitive ? "primitive" : "predefined",
 			effects[i].id, play->vmax_mv);
 
 	rc = haptics_load_predefined_effect(chip, &effects[i]);
@@ -3873,6 +3880,10 @@ static int haptics_init_lra_period_config(struct haptics_chip *chip)
 
 	/* get calibrated close loop period */
 	t_lra_us = chip->config.t_lra_us;
+	if (t_lra_us != 0) {
+		dev_info(chip->dev, "show lra frequency %ld Hz\n", USEC_PER_SEC / t_lra_us);
+	}
+
 	rc = haptics_get_closeloop_lra_period(chip, true);
 	if (!rc && chip->config.cl_t_lra_us != 0)
 		t_lra_us = chip->config.cl_t_lra_us;
@@ -4370,6 +4381,7 @@ static int haptics_parse_effect_fifo_data(struct haptics_chip *chip,
 		return rc;
 	}
 
+	effect->t_lra_us = config->t_lra_us;
 	effect->fifo->num_s = tmp;
 	effect->fifo->period_per_s = T_LRA;
 	rc = of_property_read_u32(node, "qcom,wf-fifo-period", &tmp);
@@ -5957,6 +5969,53 @@ static int haptics_start_auto_brake_calibration(struct haptics_chip *chip)
 	return haptics_auto_brake_pbs_trigger(chip);
 }
 
+static int haptics_start_play(struct haptics_chip *chip, bool enable)
+{
+	int rc;
+	u8 amplitude;
+	u32 vmax_mv = chip->config.vmax_mv;
+
+	mutex_lock(&chip->play.lock);
+	if (enable) {
+		/* Stop other mode playing if there is any */
+		rc = haptics_enable_play(chip, false);
+		if (rc < 0) {
+			dev_err(chip->dev, "Stop playing failed, rc=%d\n", rc);
+			goto unlock;
+		}
+
+		rc = haptics_set_vmax_mv(chip, vmax_mv);
+		if (rc < 0)
+			goto unlock;
+
+		amplitude = get_direct_play_max_amplitude(chip);
+		rc = haptics_set_direct_play(chip, amplitude);
+		if (rc < 0)
+			goto unlock;
+
+		rc = haptics_enable_hpwr_vreg(chip, true);
+		if (rc < 0)
+			goto unlock;
+
+		chip->play.pattern_src = DIRECT_PLAY;
+		rc = haptics_enable_play(chip, true);
+		if (rc < 0)
+			goto unlock;
+
+		mutex_unlock(&chip->play.lock);
+		return rc;
+	}
+
+unlock:
+	/* Disable play in case it's not been disabled */
+	haptics_enable_play(chip, false);
+	rc = haptics_enable_hpwr_vreg(chip, false);
+
+	mutex_unlock(&chip->play.lock);
+
+	return rc;
+}
+
 static int haptics_start_lra_calibrate(struct haptics_chip *chip)
 {
 	int rc;
@@ -6162,12 +6221,38 @@ static ssize_t i_gain_error_show(const struct class *c,
 }
 static const CLASS_ATTR_RO(i_gain_error);
 
+static ssize_t enable_play_store(const struct class *c,
+		const struct class_attribute *attr, const char *buf, size_t count)
+{
+	struct haptics_chip *chip = container_of(c,
+			struct haptics_chip, hap_class);
+	int val;
+	int rc;
+
+	if (kstrtoint(buf, 0, &val))
+		return -EINVAL;
+
+	if (val) {
+		rc = haptics_start_play(chip, true);
+		if (rc < 0)
+			return rc;
+	} else {
+		rc = haptics_start_play(chip, false);
+		if (rc < 0)
+			return rc;
+	}
+
+	return count;
+}
+static CLASS_ATTR_WO(enable_play);
+
 static struct attribute *hap_class_attrs[] = {
 	&class_attr_lra_calibration.attr,
 	&class_attr_lra_frequency_hz.attr,
 	&class_attr_lra_impedance.attr,
 	&class_attr_primitive_duration.attr,
 	&class_attr_visense_enabled.attr,
+	&class_attr_enable_play.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(hap_class);
@@ -6438,6 +6523,54 @@ static int haptics_probe(struct platform_device *pdev)
 
 	haptics_runtime_autosuspend(chip);
 	phapchip = chip;
+	if (of_property_read_bool(chip->dev->of_node, "moto,cal_again")) {
+		u32 t_lra_us_min, t_lra_us_max, f0_cal_count;
+		u32 cl_f_lra = USEC_PER_SEC / chip->config.cl_t_lra_us;
+		dev_err(chip->dev, "In XBL cal F0 is %d Hz\n", cl_f_lra);
+		rc = of_property_read_u32(chip->dev->of_node, "moto,lra-period-us-min", &t_lra_us_min);
+		if (rc < 0) {
+			dev_err(chip->dev, "Read T-LRA-min failed, rc=%d\n", rc);
+			goto continue_on;
+		}
+		rc = of_property_read_u32(chip->dev->of_node, "moto,lra-period-us-max", &t_lra_us_max);
+		if (rc < 0) {
+			dev_err(chip->dev, "Read T-LRA-max failed, rc=%d\n", rc);
+			goto continue_on;
+		}
+		/* If calibration failed in XBL,will be calibrate again */
+		if (chip->config.cl_t_lra_us < t_lra_us_min || chip->config.cl_t_lra_us > t_lra_us_max) {
+			dev_err(chip->dev, "The start up cal fail, cal again in kernel\n");
+			rc = haptics_start_lra_calibrate(chip);
+			if (rc < 0) {
+				dev_err(chip->dev, "Cal again failed in kernel\n");
+				goto continue_on;
+			}
+			cl_f_lra = USEC_PER_SEC / chip->config.cl_t_lra_us;
+			dev_err(chip->dev, "Latest cal F0 is %d Hz\n", cl_f_lra);
+
+			/* If cal failed in kernel, force set manual freq */
+			if (chip->config.cl_t_lra_us < t_lra_us_min || chip->config.cl_t_lra_us > t_lra_us_max) {
+				rc = of_property_read_u32(chip->dev->of_node, "moto,lra-period-cal-count", &f0_cal_count);
+				if (rc < 0) {
+					dev_err(chip->dev, "Read cal-count failed, rc=%d\n", rc);
+					f0_cal_count = LRA_F0_CAL_COUNT;
+				}
+				dev_err(chip->dev, "Failure of all cal, set manual freq to %dHz, f0_count to %d\n",
+						cl_f_lra, f0_cal_count);
+
+				chip->config.cl_t_lra_us = chip->config.t_lra_us;
+				chip->config.rc_clk_cal_count = f0_cal_count;
+				rc = haptics_config_openloop_lra_period(chip, chip->config.cl_t_lra_us);
+				if (rc < 0)
+					dev_err(chip->dev, "Config manual freq failed, rc=%d\n", rc);
+				rc = haptics_set_manual_rc_clk_cal(chip);
+				if (rc < 0)
+					dev_err(chip->dev, "Config manual cal count failed, rc=%d\n", rc);
+			}
+		}
+	}
+
+continue_on:
 	return 0;
 remove_v_gain_error:
 	class_remove_file(&chip->hap_class, &class_attr_v_gain_error);

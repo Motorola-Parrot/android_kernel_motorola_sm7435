@@ -4,6 +4,53 @@
 #
 menu "Qualcomm SoC drivers"
 
+config MMI_DEVICE_DTBS
+	depends on ARCH_QCOM
+	default n
+	bool "Motorola Mobility Device DTBs"
+	help
+		Only include Motorola device specific DTBs to limit the number that
+		get built during kernel completion.
+
+config PAROS_DTB
+	depends on MMI_DEVICE_DTBS
+	default n
+	bool "Motorola Mobility Paros Device DTBs"
+	help
+		Only include Motorola Paros device specific device tree
+
+config MONA_DTB
+	depends on MMI_DEVICE_DTBS
+	default n
+	bool "Motorola Mobility Mona Device DTBs"
+	help
+		Only include Motorola MOna device specific device tree
+
+
+config MONAI_DTB
+	depends on MMI_DEVICE_DTBS
+	default n
+	bool "Motorola Mobility Monai Device DTBs"
+	help
+		Only include Motorola Monai device specific device tree
+		
+		
+config PARO_DTB
+	depends on MMI_DEVICE_DTBS
+	default n
+	bool "Motorola Mobility Paro Device DTBs"
+	help
+		Only include Motorola Paro device specific device tree
+
+
+config CUSCO_DTB
+    depends on MMI_DEVICE_DTBS
+    default n
+    bool "Motorola Mobility Cusco Device DTB"
+    help
+        Only include Motorola Cusco device specific DTB.
+
+
 config SPS
 	tristate "SPS support"
 	select GENERIC_ALLOCATOR
@@ -600,8 +647,8 @@ config QCOM_WDOG_BITE_EARLY_PANIC
 config QCOM_WATCHDOG_BARK_TIME
 	depends on QCOM_WDT_CORE
 	int "Qualcomm Technologies, Inc. Watchdog bark time in ms"
-	default 11000
-	range 11000 11000
+	default 16000
+	range 11000 22000
 	help
 	  The amount of time, in milliseconds, that should elapse after
 	  a watchdog timer reset before a bark interrupt is sent from the

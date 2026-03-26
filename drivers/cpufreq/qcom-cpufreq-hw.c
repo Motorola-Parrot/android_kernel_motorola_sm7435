@@ -469,7 +469,7 @@ static void qcom_lmh_dcvs_notify(struct qcom_cpufreq_data *data)
 	 */
 	if (throttled_freq >= qcom_cpufreq_get_freq(cpufreq_cpu_get_raw(cpu))) {
 		thermal_pressure = policy->cpuinfo.max_freq;
-
+		
 		enable_irq(data->throttle_irq);
 		trace_dcvsh_throttle(cpu, 0);
 	} else {

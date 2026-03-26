@@ -1,6 +1,7 @@
 load(":image_opts.bzl", "boot_image_opts")
 load(":msm_kernel_la.bzl", "define_msm_la")
 load(":target_variants.bzl", "la_variants")
+load(":moto_product.bzl", "mmi_product_name")
 
 target_name = "parrot"
 
@@ -65,6 +66,7 @@ def define_parrot():
         "drivers/iio/adc/qcom-vadc-common.ko",
         "drivers/iio/adc/qti-glink-adc.ko",
         "drivers/input/misc/pm8941-pwrkey.ko",
+        "drivers/input/misc/qcom-hv-haptics.ko",
         "drivers/input/misc/qpnp-power-on.ko",
         "drivers/interconnect/qcom/icc-bcm-voter.ko",
         "drivers/interconnect/qcom/icc-debug.ko",
@@ -151,7 +153,6 @@ def define_parrot():
         "drivers/soc/qcom/gic_intr_routing.ko",
         "drivers/soc/qcom/hung_task_enh.ko",
         "drivers/soc/qcom/mdt_loader.ko",
-        "drivers/soc/qcom/mem-offline.ko",
         "drivers/soc/qcom/mem_buf/mem_buf.ko",
         "drivers/soc/qcom/mem_buf/mem_buf_dev.ko",
         "drivers/soc/qcom/mem_buf/mem_buf_msgq.ko",
@@ -255,15 +256,24 @@ def define_parrot():
 
     _parrot_consolidate_in_tree_modules = _parrot_in_tree_modules + [
         # keep sorted
-        "drivers/hwtracing/coresight/coresight-etm4x.ko",
-        "drivers/misc/lkdtm/lkdtm.ko",
-        "kernel/locking/locktorture.ko",
-        "kernel/rcu/rcutorture.ko",
-        "kernel/sched/walt/sched-walt-debug.ko",
-        "kernel/torture.ko",
-        "lib/atomic64_test.ko",
-        "lib/test_user_copy.ko",
+        #"drivers/misc/lkdtm/lkdtm.ko",
+        #"kernel/locking/locktorture.ko",
+        "kernel/power/user_sysfs_private.ko",
+        #"kernel/rcu/rcutorture.ko",
+        #"kernel/sched/walt/sched-walt-debug.ko",
+        #"kernel/torture.ko",
+        #"lib/atomic64_test.ko",
+        #"lib/test_user_copy.ko",
     ]
+
+    _parrot_moto_in_tree_modules = {
+        "mona": [
+        # keep sorted
+        ],
+        "monai": [
+        # keep sorted
+        ],
+    }
 
     kernel_vendor_cmdline_extras = ["bootconfig"]
 
@@ -273,7 +283,7 @@ def define_parrot():
 
         if variant == "consolidate":
             mod_list = _parrot_consolidate_in_tree_modules
-            board_bootconfig_extras += ["androidboot.serialconsole=1"]
+            #board_bootconfig_extras += ["androidboot.serialconsole=1"]
             board_kernel_cmdline_extras += [
                 # do not sort
                 "console=ttyMSM0,115200n8",
@@ -290,12 +300,17 @@ def define_parrot():
             mod_list = _parrot_in_tree_modules
             board_kernel_cmdline_extras += ["nosoftlockup console=ttynull qcom_geni_serial.con_enabled=0"]
             kernel_vendor_cmdline_extras += ["nosoftlockup console=ttynull qcom_geni_serial.con_enabled=0"]
-            board_bootconfig_extras += ["androidboot.serialconsole=0"]
+            #board_bootconfig_extras += ["androidboot.serialconsole=0"]
+
+        moto_in_tree_modules = [ ]
+        for p, v in _parrot_moto_in_tree_modules.items():
+             if p == mmi_product_name:
+                moto_in_tree_modules = v
 
         define_msm_la(
             msm_target = target_name,
             variant = variant,
-            in_tree_module_list = mod_list,
+            in_tree_module_list = mod_list + moto_in_tree_modules,
             boot_image_opts = boot_image_opts(
                 kernel_vendor_cmdline_extras = kernel_vendor_cmdline_extras,
                 board_kernel_cmdline_extras = board_kernel_cmdline_extras,

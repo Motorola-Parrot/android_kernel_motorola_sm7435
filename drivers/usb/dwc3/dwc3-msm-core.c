@@ -55,6 +55,11 @@
 #include "xhci.h"
 #include "debug-ipc.h"
 
+#undef dev_dbg
+#undef pr_debug
+#define dev_dbg dev_info
+#define pr_debug pr_info
+
 #define NUM_LOG_PAGES   12
 
 /* dload specific suppot */
@@ -2398,6 +2403,30 @@ static void gsi_free_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 	req->buf_base_addr = NULL;
 	sg_free_table(&req->sgt_data_buff);
 }
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,87)
+static int gsi_set_xfer_resource(struct dwc3_ep *dep)
+{
+	struct dwc3_gadget_ep_cmd_params params;
+	int ret;
+
+	if (dep->flags & DWC3_EP_RESOURCE_ALLOCATED)
+		return 0;
+
+	memset(&params, 0x00, sizeof(params));
+
+	params.param0 = DWC3_DEPXFERCFG_NUM_XFER_RES(1);
+
+	ret = dwc3_core_send_gadget_ep_cmd(dep, DWC3_DEPCMD_SETTRANSFRESOURCE,
+			&params);
+	if (ret)
+		return ret;
+
+	dep->flags |= DWC3_EP_RESOURCE_ALLOCATED;
+	return 0;
+}
+#endif
+
 /**
  * Configures GSI EPs. For GSI EPs we need to set interrupter numbers.
  *
@@ -2415,6 +2444,9 @@ static void gsi_configure_ep(struct usb_ep *ep, struct usb_gsi_request *request)
 	int n = request->ep_intr_num - 1;
 	u32 reg;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,87)
+	gsi_set_xfer_resource(dep);
+#endif
 	/* setup dummy doorbell as IPA connection isn't setup yet */
 	dwc3_msm_write_reg(mdwc->base, GSI_DBL_ADDR_H(mdwc->gsi_reg, n),
 			upper_32_bits(mdwc->dummy_gsi_db_dma));
@@ -4640,6 +4672,7 @@ skip_update:
 	if (mdwc->resume_pending) {
 		pm_runtime_resume(mdwc->dev);
 		mdwc->resume_pending = false;
+		dev_dbg(mdwc->dev, "%s: set resume_pending to false\n", __func__);
 	}
 
 	if (atomic_read(&mdwc->pm_suspended)) {
@@ -4732,6 +4765,10 @@ static irqreturn_t msm_dwc3_pwr_irq(int irq, void *data)
 		/* set this to call dwc3_msm_resume() */
 		mdwc->resume_pending = true;
 		return IRQ_WAKE_THREAD;
+	} else {
+		/* don't set this to call dwc3_msm_resume()when exit LPM */
+		dev_dbg(mdwc->dev, "%s resume_pending=%d, clean resume_pending\n", __func__, mdwc->resume_pending);
+		mdwc->resume_pending = false;
 	}
 
 	dwc3_pwr_event_handler(mdwc);
@@ -5561,6 +5598,21 @@ static void dwc3_msm_set_dp_only_params(struct dwc3_msm *mdwc)
 	dwc3_msm_set_max_speed(mdwc, USB_SPEED_HIGH);
 	mdwc->ss_phy->flags |= PHY_DP_MODE;
 }
+
+int dwc3_msm_set_usb_redriver_eq(struct device *dev)
+{
+	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
+
+	if (!mdwc || !mdwc->redriver) {
+		dev_err(dev, "dwc3-msm is not initialized yet.\n");
+		return -EAGAIN;
+	}
+
+	usb_redriver_config_dp_eq(mdwc->redriver);
+
+	return 0;
+}
+EXPORT_SYMBOL(dwc3_msm_set_usb_redriver_eq);
 
 int dwc3_msm_set_dp_mode(struct device *dev, bool dp_connected, int lanes)
 {
@@ -6506,6 +6558,7 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 			.allow_userspace_control = true,
 		};
 
+		dwc3_msm_set_role(mdwc, USB_ROLE_NONE);
 		role_desc.fwnode = dev_fwnode(&pdev->dev);
 		mdwc->role_switch = usb_role_switch_register(mdwc->dev,
 								&role_desc);
@@ -6526,6 +6579,13 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 					    PM_QOS_DEFAULT_VALUE);
 
 	mdwc->force_disconnect = false;
+
+	if (of_property_read_bool(node,
+					"qcom,force-adb-enable")) {
+		dev_err(mdwc->dev, "%s: force usb start device mode\n", __func__);
+		dwc3_start_stop_device(mdwc, true);
+	}
+
 	return 0;
 
 put_dwc3:

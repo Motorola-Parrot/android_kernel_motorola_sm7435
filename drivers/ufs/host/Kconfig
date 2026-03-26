@@ -164,3 +164,45 @@ config SCSI_UFS_CRYPTO_QTI
 
 	  Select this to enable QCOM Hardware Wrapped Key support for the
 	  ICE hardware.
+
+config UFSFEATURE
+	bool "UFS feature activate"
+	depends on SCSI_UFSHCD
+	help
+	  UFS feature activate such as tw, hid and etc.
+
+config UFSHID
+	bool "UFS Host Initiated Defrag support"
+	depends on SCSI_UFSHCD && UFSFEATURE
+	help
+	  UFS HID Feature Enable
+
+config UFSHID_POC
+	bool "UFSHID_POC test"
+	depends on SCSI_UFSHCD && UFSFEATURE && UFSHID
+	help
+	  UFS HID POC test
+	  1. block to enter suspend state
+	  2. auto_hibern8 enable/disable (HCI)
+	  3. set flag bDefragOperation
+	  4. debug msg enable (default : disable)
+
+config MICRON_UFSHID
+	tristate "micron Host Initiated Defrag support"
+	depends on SCSI_UFSHCD && UFSFEATURE && UFSHID
+	help
+	  Enable Micron HID feature
+
+config SCSI_SKHID
+	bool "SKHix UFS Host Initiated Defrag supportr"
+	depends on SCSI_UFSHCD
+	help
+	  SKHix UFS HID Feature Enable
+
+config UFS_LONGSYS_RT_CP_TIMEOUT
+	bool "Moto fix Longsys UFS CP0 Timeout issue with hooks"
+	depends on SCSI_UFSHCD
+	default n
+	help
+	  Enable on products that use Longsys UFS.
+	  This require Kernel support on mcq vendor hook like in kernel 5.15.

@@ -63,3 +63,9 @@ blocklist vsock
 blocklist vsock_diag
 blocklist xc4000
 blocklist xc5000
+blocklist goodix_fod_mmi.ko
+blocklist rbs_fod_mmi.ko
+blocklist watchdogtest
+blocklist anc_fps_mmi
+blocklist fpc1020_mmi
+
